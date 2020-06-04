@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,13 +25,13 @@ var reqCnt = &Metric{
 	Name:        "requests_total",
 	Description: "How many HTTP requests processed, partitioned by status code and HTTP method.",
 	Type:        "counter_vec",
-	Args:        []string{"code", "method", "handler", "host", "url"}}
+	Args:        []string{"code", "method", "url"}}
 
 var reqDur = &Metric{
 	ID:          "reqDur",
-	Name:        "request_duration_seconds",
+	Name:        "request_duration_seconds_total",
 	Description: "The HTTP request latencies in seconds.",
-	Type:        "histogram_vec",
+	Type:        "counter_vec",
 	Args:        []string{"code", "method", "url"},
 }
 
@@ -88,7 +89,7 @@ type Metric struct {
 // Prometheus contains the metrics gathered by the instance and its path
 type Prometheus struct {
 	reqCnt        *prometheus.CounterVec
-	reqDur        *prometheus.HistogramVec
+	reqDur        *prometheus.CounterVec
 	reqSz, resSz  prometheus.Summary
 	router        *gin.Engine
 	listenAddress string
@@ -140,7 +141,11 @@ func NewPrometheus(subsystem string, customMetricsList ...[]*Metric) *Prometheus
 		MetricsList: metricsList,
 		MetricsPath: defaultMetricPath,
 		ReqCntURLLabelMappingFn: func(c *gin.Context) string {
-			return c.Request.URL.Path // i.e. by default do nothing, i.e. return URL as is
+			url := c.Request.URL.Path
+			for _, p := range c.Params {
+				url = strings.Replace(url, p.Value, p.Key, 1)
+			}
+			return url
 		},
 	}
 
@@ -331,7 +336,7 @@ func (p *Prometheus) registerMetrics(subsystem string) {
 		case reqCnt:
 			p.reqCnt = metric.(*prometheus.CounterVec)
 		case reqDur:
-			p.reqDur = metric.(*prometheus.HistogramVec)
+			p.reqDur = metric.(*prometheus.CounterVec)
 		case resSz:
 			p.resSz = metric.(prometheus.Summary)
 		case reqSz:
@@ -368,7 +373,7 @@ func (p *Prometheus) HandlerFunc() gin.HandlerFunc {
 
 		status := strconv.Itoa(c.Writer.Status())
 		elapsed := float64(time.Since(start)) / float64(time.Second)
-		resSz := float64(c.Writer.Size())
+        resSz := float64(c.Writer.Size())
 
 		url := p.ReqCntURLLabelMappingFn(c)
 		// jlambert Oct 2018 - sidecar specific mod
@@ -379,8 +384,8 @@ func (p *Prometheus) HandlerFunc() gin.HandlerFunc {
 			}
 			url = u.(string)
 		}
-		p.reqDur.WithLabelValues(status, c.Request.Method, url).Observe(elapsed)
-		p.reqCnt.WithLabelValues(status, c.Request.Method, c.HandlerName(), c.Request.Host, url).Inc()
+		p.reqDur.WithLabelValues(status, c.Request.Method, url).Add(elapsed)
+		p.reqCnt.WithLabelValues(status, c.Request.Method, url).Inc()
 		p.reqSz.Observe(float64(reqSz))
 		p.resSz.Observe(resSz)
 	}

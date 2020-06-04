@@ -1,7 +1,8 @@
 package main
 
 import (
-	"github.com/mcuadros/go-gin-prometheus"
+	"github.com/easyops-cn/go-gin-prometheus"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +34,8 @@ func main() {
 	p := ginprometheus.NewPrometheus("gin")
 
 	p.Use(r)
-	r.GET("/", func(c *gin.Context) {
+	r.GET("/api/v1/:xxx", func(c *gin.Context) {
+		time.Sleep(1 * time.Second)
 		c.JSON(200, "Hello world!")
 	})
 
