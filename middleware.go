@@ -2,6 +2,7 @@ package ginprometheus
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -143,7 +144,7 @@ func NewPrometheus(subsystem string, customMetricsList ...[]*Metric) *Prometheus
 		ReqCntURLLabelMappingFn: func(c *gin.Context) string {
 			url := c.Request.URL.Path
 			for _, p := range c.Params {
-				url = strings.Replace(url, p.Value, p.Key, 1)
+				url = strings.Replace(url, p.Value, fmt.Sprintf(":%s", p.Key), 1)
 			}
 			return url
 		},
