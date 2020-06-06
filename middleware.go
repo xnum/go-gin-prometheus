@@ -26,14 +26,14 @@ var reqCnt = &Metric{
 	Name:        "requests_total",
 	Description: "How many HTTP requests processed, partitioned by status code and HTTP method.",
 	Type:        "counter_vec",
-	Args:        []string{"code", "method", "url"}}
+	Args:        []string{"code", "method", "uri"}}
 
 var reqDur = &Metric{
 	ID:          "reqDur",
 	Name:        "request_duration_seconds_total",
 	Description: "The HTTP request latencies in seconds.",
 	Type:        "counter_vec",
-	Args:        []string{"code", "method", "url"},
+	Args:        []string{"code", "method", "uri"},
 }
 
 var resSz = &Metric{
@@ -57,7 +57,7 @@ var standardMetrics = []*Metric{
 
 /*
 RequestCounterURLLabelMappingFn is a function which can be supplied to the middleware to control
-the cardinality of the request counter's "url" label, which might be required in some contexts.
+the cardinality of the request counter's "uri" label, which might be required in some contexts.
 For instance, if for a "/customer/:name" route you don't want to generate a time series for every
 possible customer name, you could use this function:
 
@@ -124,7 +124,7 @@ type PrometheusPushGateway struct {
 }
 
 // NewPrometheus generates a new set of metrics with a certain subsystem name
-func NewPrometheus(subsystem string, customMetricsList ...[]*Metric) *Prometheus {
+func NewPrometheus(customMetricsList ...[]*Metric) *Prometheus {
 
 	var metricsList []*Metric
 
@@ -150,7 +150,7 @@ func NewPrometheus(subsystem string, customMetricsList ...[]*Metric) *Prometheus
 		},
 	}
 
-	p.registerMetrics(subsystem)
+	p.registerMetrics("service")
 
 	return p
 }
