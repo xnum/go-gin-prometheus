@@ -31,7 +31,7 @@ func main() {
 		p := ginprometheus.NewPrometheus("gin", customMetrics)
 	*/
 
-	p := ginprometheus.NewPrometheus("gin")
+	p := ginprometheus.NewPrometheus("fooService")
 
 	p.Use(r)
 	r.GET("/api/v1/:xxx", func(c *gin.Context) {

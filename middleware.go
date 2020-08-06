@@ -26,14 +26,14 @@ var reqCnt = &Metric{
 	Name:        "requests_total",
 	Description: "How many HTTP requests processed, partitioned by status code and HTTP method.",
 	Type:        "counter_vec",
-	Args:        []string{"code", "method", "uri"}}
+	Args:        []string{"service", "code", "method", "uri"}}
 
 var reqDur = &Metric{
 	ID:          "reqDur",
 	Name:        "request_duration_seconds_total",
 	Description: "The HTTP request latencies in seconds.",
 	Type:        "counter_vec",
-	Args:        []string{"code", "method", "uri"},
+	Args:        []string{"service", "code", "method", "uri"},
 }
 
 var resSz = &Metric{
@@ -103,6 +103,8 @@ type Prometheus struct {
 
 	// gin.Context string to use as a prometheus URL label
 	URLLabelFromContext string
+
+	serviceName string
 }
 
 // PrometheusPushGateway contains the configuration for pushing to a Prometheus pushgateway (optional)
@@ -124,7 +126,7 @@ type PrometheusPushGateway struct {
 }
 
 // NewPrometheus generates a new set of metrics with a certain subsystem name
-func NewPrometheus(customMetricsList ...[]*Metric) *Prometheus {
+func NewPrometheus(serviceName string, customMetricsList ...[]*Metric) *Prometheus {
 
 	var metricsList []*Metric
 
@@ -148,6 +150,7 @@ func NewPrometheus(customMetricsList ...[]*Metric) *Prometheus {
 			}
 			return url
 		},
+		serviceName: serviceName,
 	}
 
 	p.registerMetrics("service")
@@ -385,8 +388,8 @@ func (p *Prometheus) HandlerFunc() gin.HandlerFunc {
 			}
 			url = u.(string)
 		}
-		p.reqDur.WithLabelValues(status, c.Request.Method, url).Add(elapsed)
-		p.reqCnt.WithLabelValues(status, c.Request.Method, url).Inc()
+		p.reqDur.WithLabelValues(p.serviceName, status, c.Request.Method, url).Add(elapsed)
+		p.reqCnt.WithLabelValues(p.serviceName, status, c.Request.Method, url).Inc()
 		p.reqSz.Observe(float64(reqSz))
 		p.resSz.Observe(resSz)
 	}
