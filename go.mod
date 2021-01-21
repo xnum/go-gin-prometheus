@@ -1,4 +1,4 @@
-module github.com/easyops-cn/go-gin-prometheus
+module github.com/xnum/go-gin-prometheus
 
 go 1.12
 
