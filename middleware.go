@@ -2,12 +2,10 @@ package ginprometheus
 
 import (
 	"bytes"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,42 +15,12 @@ import (
 )
 
 var defaultMetricPath = "/metrics"
+var defaultNamespace = ""
+var defaultSubsystem = ""
 
-// Standard default metrics
-//	counter, counter_vec, gauge, gauge_vec,
-//	histogram, histogram_vec, summary, summary_vec
-var reqCnt = &Metric{
-	ID:          "reqCnt",
-	Name:        "requests_total",
-	Description: "How many HTTP requests processed, partitioned by status code and HTTP method.",
-	Type:        "counter_vec",
-	Args:        []string{"service", "code", "method", "uri"}}
-
-var reqDur = &Metric{
-	ID:          "reqDur",
-	Name:        "request_duration_seconds_total",
-	Description: "The HTTP request latencies in seconds.",
-	Type:        "counter_vec",
-	Args:        []string{"service", "code", "method", "uri"},
-}
-
-var resSz = &Metric{
-	ID:          "resSz",
-	Name:        "response_size_bytes",
-	Description: "The HTTP response sizes in bytes.",
-	Type:        "summary"}
-
-var reqSz = &Metric{
-	ID:          "reqSz",
-	Name:        "request_size_bytes",
-	Description: "The HTTP request sizes in bytes.",
-	Type:        "summary"}
-
-var standardMetrics = []*Metric{
-	reqCnt,
-	reqDur,
-	resSz,
-	reqSz,
+func SetPrefix(namespace, subsystem string) {
+	defaultNamespace = namespace
+	defaultSubsystem = subsystem
 }
 
 /*
@@ -76,27 +44,15 @@ which would map "/customer/alice" and "/customer/bob" to their template "/custom
 */
 type RequestCounterURLLabelMappingFn func(c *gin.Context) string
 
-// Metric is a definition for the name, description, type, ID, and
-// prometheus.Collector type (i.e. CounterVec, Summary, etc) of each metric
-type Metric struct {
-	MetricCollector prometheus.Collector
-	ID              string
-	Name            string
-	Description     string
-	Type            string
-	Args            []string
-}
-
 // Prometheus contains the metrics gathered by the instance and its path
 type Prometheus struct {
 	reqCnt        *prometheus.CounterVec
 	reqDur        *prometheus.CounterVec
-	reqSz, resSz  prometheus.Summary
+	reqSz, respSz prometheus.Summary
 	router        *gin.Engine
 	listenAddress string
 	Ppg           PrometheusPushGateway
 
-	MetricsList []*Metric
 	MetricsPath string
 
 	ReqCntURLLabelMappingFn RequestCounterURLLabelMappingFn
@@ -126,34 +82,56 @@ type PrometheusPushGateway struct {
 }
 
 // NewPrometheus generates a new set of metrics with a certain subsystem name
-func NewPrometheus(serviceName string, customMetricsList ...[]*Metric) *Prometheus {
-
-	var metricsList []*Metric
-
-	if len(customMetricsList) > 1 {
-		panic("Too many args. NewPrometheus( string, <optional []*Metric> ).")
-	} else if len(customMetricsList) == 1 {
-		metricsList = customMetricsList[0]
-	}
-
-	for _, metric := range standardMetrics {
-		metricsList = append(metricsList, metric)
-	}
+func NewPrometheus(serviceName string, customMetricsList ...prometheus.Collector) *Prometheus {
 
 	p := &Prometheus{
-		MetricsList: metricsList,
 		MetricsPath: defaultMetricPath,
 		ReqCntURLLabelMappingFn: func(c *gin.Context) string {
-			url := c.Request.URL.Path
-			for _, p := range c.Params {
-				url = strings.Replace(url, p.Value, fmt.Sprintf(":%s", p.Key), 1)
-			}
-			return url
+			return c.FullPath()
 		},
 		serviceName: serviceName,
 	}
 
-	p.registerMetrics("service")
+	p.reqCnt = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: defaultNamespace,
+			Subsystem: defaultSubsystem,
+			Name:      "requests_total",
+			Help:      "How many HTTP requests processed, partitioned by status code and HTTP method.",
+		},
+		[]string{"service", "code", "method", "uri"},
+	)
+
+	p.reqDur = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: defaultNamespace,
+			Subsystem: defaultSubsystem,
+			Name:      "request_duration_seconds_total",
+			Help:      "The HTTP request latencies in seconds.",
+		},
+		[]string{"service", "code", "method", "uri"},
+	)
+
+	p.respSz = prometheus.NewSummary(
+		prometheus.SummaryOpts{
+			Namespace: defaultNamespace,
+			Subsystem: defaultSubsystem,
+			Name:      "response_size_bytes",
+			Help:      "The HTTP response sizes in bytes.",
+		},
+	)
+
+	p.reqSz = prometheus.NewSummary(
+		prometheus.SummaryOpts{
+			Namespace: defaultNamespace,
+			Subsystem: defaultSubsystem,
+			Name:      "request_size_bytes",
+			Help:      "The HTTP request sizes in bytes.",
+		},
+	)
+
+	prometheus.MustRegister(p.reqCnt, p.reqDur, p.reqSz, p.respSz)
+	prometheus.MustRegister(customMetricsList...)
 
 	return p
 }
@@ -253,103 +231,6 @@ func (p *Prometheus) startPushTicker() {
 	}()
 }
 
-// NewMetric associates prometheus.Collector based on Metric.Type
-func NewMetric(m *Metric, subsystem string) prometheus.Collector {
-	var metric prometheus.Collector
-	switch m.Type {
-	case "counter_vec":
-		metric = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-			m.Args,
-		)
-	case "counter":
-		metric = prometheus.NewCounter(
-			prometheus.CounterOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-		)
-	case "gauge_vec":
-		metric = prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-			m.Args,
-		)
-	case "gauge":
-		metric = prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-		)
-	case "histogram_vec":
-		metric = prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-			m.Args,
-		)
-	case "histogram":
-		metric = prometheus.NewHistogram(
-			prometheus.HistogramOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-		)
-	case "summary_vec":
-		metric = prometheus.NewSummaryVec(
-			prometheus.SummaryOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-			m.Args,
-		)
-	case "summary":
-		metric = prometheus.NewSummary(
-			prometheus.SummaryOpts{
-				Subsystem: subsystem,
-				Name:      m.Name,
-				Help:      m.Description,
-			},
-		)
-	}
-	return metric
-}
-
-func (p *Prometheus) registerMetrics(subsystem string) {
-
-	for _, metricDef := range p.MetricsList {
-		metric := NewMetric(metricDef, subsystem)
-		if err := prometheus.Register(metric); err != nil {
-			log.WithError(err).Errorf("%s could not be registered in Prometheus", metricDef.Name)
-		}
-		switch metricDef {
-		case reqCnt:
-			p.reqCnt = metric.(*prometheus.CounterVec)
-		case reqDur:
-			p.reqDur = metric.(*prometheus.CounterVec)
-		case resSz:
-			p.resSz = metric.(prometheus.Summary)
-		case reqSz:
-			p.reqSz = metric.(prometheus.Summary)
-		}
-		metricDef.MetricCollector = metric
-	}
-}
-
 // Use adds the middleware to a gin engine.
 func (p *Prometheus) Use(e *gin.Engine) {
 	e.Use(p.HandlerFunc())
@@ -377,7 +258,7 @@ func (p *Prometheus) HandlerFunc() gin.HandlerFunc {
 
 		status := strconv.Itoa(c.Writer.Status())
 		elapsed := float64(time.Since(start)) / float64(time.Second)
-        resSz := float64(c.Writer.Size())
+		respSz := float64(c.Writer.Size())
 
 		url := p.ReqCntURLLabelMappingFn(c)
 		// jlambert Oct 2018 - sidecar specific mod
@@ -391,7 +272,7 @@ func (p *Prometheus) HandlerFunc() gin.HandlerFunc {
 		p.reqDur.WithLabelValues(p.serviceName, status, c.Request.Method, url).Add(elapsed)
 		p.reqCnt.WithLabelValues(p.serviceName, status, c.Request.Method, url).Inc()
 		p.reqSz.Observe(float64(reqSz))
-		p.resSz.Observe(resSz)
+		p.respSz.Observe(respSz)
 	}
 }
 
